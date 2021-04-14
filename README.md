@@ -58,7 +58,7 @@ Interpretating predictors for proteins.
 [Notebook 5a: Interpreting Hallucinated Protein Structures (no MSA)](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/protein/scrambler_rosetta_example_no_msa.ipynb)<br/>
 [Notebook 5b: Interpreting Natural Protein Structures (with MSA)](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/protein/scrambler_rosetta_example_with_msa.ipynb)<br/>
 
-### DEN Training GIFs
+### Scrambler Training GIFs
 The following GIFs illustrate how the Scrambler network interpretations converge on a few select input examples during training.
 
 **WARNING:** The following GIFs contain flickering pixels/colors. Do not look at them if you are sensitive to such images.
