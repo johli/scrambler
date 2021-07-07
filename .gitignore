@@ -26,6 +26,21 @@ __pycache__/
 
 !resources/scrambler_logo.png
 
+!examples/image/saved_models/mnist_binarized_cnn_10_digits.h5
+
+!examples/dna/apa_doubledope_cached_set.csv
+!examples/dna/saved_models/aparent_plasmid_iso_cut_distalpas_all_libs_no_sampleweights_sgd.h5
+
+!examples/dna/bottom5KIFuAUGTop5KIFuAUG.csv
+!examples/dna/randomSampleTestingAllAUGtypes.csv
+!examples/dna/saved_models/optimusRetrainedMain.hdf5
+
+!scrambler/examples/protein/T1001.a3m
+
+!scrambler/examples/protein/coiled_coil_binders_big_set_train.csv
+!scrambler/examples/protein/coiled_coil_binders_big_set_test.csv
+!scrambler/examples/protein/saved_models/ppi_rnn_baker_big_set_5x_negatives_classifier_symmetric_drop_25_5x_negatives_balanced_partitioned_data_epoch_10.h5
+
 *.zip
 *.tar.gz
 

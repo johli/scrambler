@@ -35,8 +35,7 @@ def load_apa_data(data_path, encoder) :
     dataset_name = "apa_doubledope"
 
     #Load cached dataframe
-    cached_dict = pickle.load(open(data_path, 'rb'))
-    data_df = cached_dict['data_df']
+    data_df = pd.read_csv(data_path, sep='\t')
 
     print("len(data_df) = " + str(len(data_df)) + " (loaded)")
     

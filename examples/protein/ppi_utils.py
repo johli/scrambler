@@ -44,55 +44,20 @@ def get_amino_seq(row, index, flips, homodimers) :
     
     return amino_seq_1, amino_seq_2
 
-def load_ppi_data(data_path, encoder, n_train_pos=20000, n_train_neg=20000, n_test_pos=2000, n_test_neg=2000) :
+def load_ppi_data(train_data_path, test_data_path, encoder) :
     
     #Define dataset/experiment name
     dataset_name = "coiled_coil_binders"
-
-    data_df = pd.read_csv(data_path, sep="\t")
-    
-    data_df = data_df[['amino_seq_1', 'amino_seq_2', 'interacts']]
-
-    print("len(data_df) = " + str(len(data_df)) + " (loaded)")
     
     #Load data matrices
-    test_set_size = 0.1
-
-    batch_size = 32
-
-    #Generate training and test set indexes
-    data_index = np.arange(len(data_df), dtype=np.int)
-
-    train_index = data_index[:-int(len(data_df) * test_set_size)]
-    test_index = data_index[train_index.shape[0]:]
+    train_df = pd.read_csv(train_data_path, sep='\t')
+    test_df = pd.read_csv(test_data_path, sep='\t')
     
-    #Sub-select smaller dataset
-    orig_n_train = train_index.shape[0]
-    orig_n_test = test_index.shape[0]
-
-    train_index_pos = np.nonzero((data_df.iloc[train_index]['interacts'] == 1).values)[0][:n_train_pos]
-    train_index_neg = np.nonzero((data_df.iloc[train_index]['interacts'] == 0).values)[0][:n_train_neg]
-
-    train_index = np.concatenate([train_index_pos, train_index_neg], axis=0)
-    np.random.shuffle(train_index)
-
-    test_index_pos = np.nonzero((data_df.iloc[test_index]['interacts'] == 1).values)[0][:n_test_pos] + orig_n_train
-    test_index_neg = np.nonzero((data_df.iloc[test_index]['interacts'] == 0).values)[0][:n_test_neg] + orig_n_train
-
-    test_index = np.concatenate([test_index_pos, test_index_neg], axis=0)
-    np.random.shuffle(test_index)
-
-    print('Training set size = ' + str(train_index.shape[0]))
-    print('Test set size = ' + str(test_index.shape[0]))
-
-    n_train = train_index.shape[0] // batch_size * batch_size
-    n_test = test_index.shape[0] // batch_size * batch_size
-
-    train_index = train_index[:n_train]
-    test_index = test_index[:n_test]
-
-    train_df = data_df.iloc[train_index].copy().reset_index(drop=True)
-    test_df = data_df.iloc[test_index].copy().reset_index(drop=True)
+    n_train = len(train_df)
+    n_test = len(test_df)
+    
+    print('Training set size = ' + str(n_train))
+    print('Test set size = ' + str(n_test))
     
     #Append special binder pair to test set for monitoring / animation
     test_df = pd.concat([
