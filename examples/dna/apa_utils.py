@@ -148,6 +148,80 @@ def load_apa_predictor(predictor_path) :
 
     return predictor
 
+def load_apa_predictor_cleavage_logodds(predictor_path) :
+    
+    #Load predictor model
+
+    #Shared model definition
+    layer_1 = Conv2D(96, (8, 4), padding='valid', activation='relu')
+    layer_1_pool = MaxPooling2D(pool_size=(2, 1))
+    layer_2 = Conv2D(128, (6, 1), padding='valid', activation='relu')
+    layer_dense = Dense(256, activation='relu')
+    layer_drop = Dropout(0.2)
+
+    def shared_model(seq_input, distal_pas_input) :
+        return layer_drop(
+            layer_dense(
+                Concatenate()([
+                    Flatten()(
+                        layer_2(
+                            layer_1_pool(
+                                layer_1(
+                                    seq_input
+                                )
+                            )
+                        )
+                    ),
+                    distal_pas_input
+                ])
+            ),
+            training=False
+        )
+
+    #Inputs
+    seq_input = Input(name="seq_input", shape=(205, 4))
+
+    permute_layer = Lambda(lambda x: x[..., None])
+
+    lib_input = Input(name="lib_input", shape=(13,))
+    distal_pas_input = Input(name="distal_pas_input", shape=(1,))
+
+    plasmid_out_shared = Concatenate()([shared_model(permute_layer(seq_input), distal_pas_input), lib_input])
+
+    plasmid_out_cut = Dense(206, activation='softmax', kernel_initializer='zeros')(plasmid_out_shared)
+    plasmid_out_iso = Dense(1, activation='sigmoid', kernel_initializer='zeros', name="apa_logodds")(plasmid_out_shared)
+
+    predictor_temp = Model(
+        inputs=[
+            seq_input,
+            lib_input,
+            distal_pas_input
+        ],
+        outputs=[
+            plasmid_out_iso,
+            plasmid_out_cut
+        ]
+    )
+
+    predictor_temp.load_weights(predictor_path)
+    
+    rel_cut_layer = Lambda(lambda x: x[:, 76:76+40] / K.sum(x[:, 76:76+40], axis=1)[:, None], name='rel_cut')
+    rel_cut_summarize_layer = Lambda(lambda x: K.concatenate([K.sum(x[:, 5:5+3], axis=1)[:, None], K.sum(x[:, 15:15+3], axis=1)[:, None], K.sum(x[:, 25:25+3], axis=1)[:, None], K.sum(x[:, 35:35+3], axis=1)[:, None]], axis=1), name='rel_cut_summarize')
+    rel_cut_logodds_layer = Lambda(lambda x: K.log(K.clip(x, K.epsilon(), 1.)), name='rel_cut_logodds')
+
+    predictor = Model(
+        inputs=predictor_temp.inputs,
+        outputs=[rel_cut_logodds_layer(rel_cut_summarize_layer(rel_cut_layer(predictor_temp.outputs[1])))]
+    )
+
+    predictor.trainable = False
+
+    predictor.compile(
+        optimizer=keras.optimizers.SGD(lr=0.1),
+        loss='mean_squared_error'
+    )
+
+    return predictor
 
 def _letter_at_dna(letter, x, y, yscale=1, ax=None, color=None, alpha=1.0) :
     

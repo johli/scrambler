@@ -782,7 +782,7 @@ class Scrambler :
         self.n_classes = n_classes
         self.multi_input_mode = multi_input_mode
         self.scrambler_mode = scrambler_mode
-        self.input_size_x = input_size_x
+        self.input_size_x = input_size_x if input_size_x is not None else 1
         self.input_size_y = input_size_y
         self.n_out_channels = n_out_channels
         self.batch_size = batch_size
@@ -919,7 +919,7 @@ class Scrambler :
         #Freeze gaussian smoothing kernel
         if self.mask_smoothing :
             scrambler_model.get_layer("scrambler_smooth_conv").set_weights([
-                np.reshape(np.array(mask_smoothing_conv_weight), (1, self.mask_smoothing_window_size, 1, 1) if input_size_x == 1 else (self.mask_smoothing_window_size, self.mask_smoothing_window_size, 1, 1))
+                np.reshape(np.array(mask_smoothing_conv_weight), (1, self.mask_smoothing_window_size, 1, 1) if self.input_size_x == 1 else (self.mask_smoothing_window_size, self.mask_smoothing_window_size, 1, 1))
             ])
             scrambler_model.get_layer("scrambler_smooth_conv").trainable = False
 
@@ -949,6 +949,13 @@ class Scrambler :
         
         if not isinstance(x, list) :
             x = [x]
+        
+        signal_is_1d = False
+        if len(x[0].shape) == 3 :
+            signal_is_1d = True
+            
+            for i in range(len(x)) :
+                x[i] = x[i][:, None, ...]
         
         if group is None :
             group = [np.zeros((x[0].shape[0], 1)) for input_ix in range(self.n_inputs)]
@@ -996,16 +1003,21 @@ class Scrambler :
             sample = pred_bundle[2 * self.n_inputs + input_ix]
             score = pred_bundle[3 * self.n_inputs + input_ix]
             
-            pwms.append(pwm)
-            samples.append(sample)
-            scores.append(score)
+            if signal_is_1d :
+                pwms.append(pwm[:, 0, ...])
+                samples.append(sample[:, :, 0, ...])
+                scores.append(score[:, 0, ...])
+            else:
+                pwms.append(pwm)
+                samples.append(sample)
+                scores.append(score)
         
         if len(pwms) <= 1 :
             return pwms[0], samples[0], scores[0]
         
         return pwms, samples, scores
     
-    def train(self, predictor, x_train, y_train, x_test, y_test, n_epochs, group_train=None, group_test=None, monitor_test_indices=None, monitor_batch_freq_dict={0 : 1, 1 : 5, 5 : 10}, adam_lr=0.0001, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
+    def train(self, predictor, x_train, y_train, x_test, y_test, n_epochs, extra_input_train=None, extra_input_test=None, group_train=None, group_test=None, monitor_test_indices=None, monitor_batch_freq_dict={0 : 1, 1 : 5, 5 : 10}, adam_lr=0.0001, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', custom_loss_func=None, reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
         
         if not isinstance(x_train, list) :
             x_train = [x_train]
@@ -1019,6 +1031,58 @@ class Scrambler :
             group_train = [group_train]
             group_test = [group_test]
         
+        if extra_input_train is None :
+            extra_input_train = []
+            extra_input_test = []
+        
+        if not isinstance(extra_input_train, list) :
+            extra_input_train = [extra_input_train]
+            extra_input_test = [extra_input_test]
+        
+        n_trim_train = x_train[0].shape[0] % self.batch_size
+        n_trim_test = x_test[0].shape[0] % self.batch_size
+        
+        if n_trim_train > 0 :
+            print("(Trimming size of training data to " + str(int(x_train[0].shape[0] - n_trim_train)) + " examples).")
+            
+            for i in range(len(x_train)) :
+                x_train[i] = x_train[i][:-n_trim_train]
+            
+            for i in range(len(group_train)) :
+                group_train[i] = group_train[i][:-n_trim_train]
+            
+            for i in range(len(extra_input_train)) :
+                extra_input_train[i] = extra_input_train[i][:-n_trim_train]
+            
+            y_train = y_train[:-n_trim_train]
+        
+        if n_trim_test > 0 :
+            print("(Trimming size of test data to " + str(int(x_test[0].shape[0] - n_trim_test)) + " examples).")
+            
+            for i in range(len(x_test)) :
+                x_test[i] = x_test[i][:-n_trim_test]
+            
+            for i in range(len(group_test)) :
+                group_test[i] = group_test[i][:-n_trim_test]
+            
+            for i in range(len(extra_input_test)) :
+                extra_input_test[i] = extra_input_test[i][:-n_trim_test]
+            
+            y_test = y_test[:-n_trim_test]
+        
+        if monitor_test_indices is not None and len(monitor_test_indices) % self.batch_size > 0 :
+            monitor_test_indices = monitor_test_indices[:-len(monitor_test_indices) % self.batch_size]
+            if len(monitor_test_indices) <= 0 :
+                monitor_test_indices = None
+        
+        signal_is_1d = False
+        if len(x_train[0].shape) == 3 :
+            signal_is_1d = True
+            
+            for i in range(len(x_train)) :
+                x_train[i] = x_train[i][:, None, ...]
+                x_test[i] = x_test[i][:, None, ...]
+        
         #Freeze predictor
         predictor.trainable = False
         predictor.compile(optimizer=keras.optimizers.SGD(lr=0.1), loss='mean_squared_error')
@@ -1029,6 +1093,7 @@ class Scrambler :
         scrambler_classes = []
         scrambler_inputs = []
         scrambler_drops = []
+        scrambler_extra_inputs = []
         for input_ix in range(self.n_inputs) :
             scrambler_classes.append(Input(shape=(1,), name='t_scrambler_group_' + str(input_ix)))
             scrambler_inputs.append(Input(shape=(self.input_size_x, self.input_size_y, self.n_out_channels), name='t_scrambler_input_' + str(input_ix)))
@@ -1040,6 +1105,9 @@ class Scrambler :
         scrambler_label = None
         if self.label_input or reference == 'label' :
             scrambler_label = Input(shape=(self.n_classes,), name='t_scrambler_label')
+        
+        for extra_in_ix, extra_in in enumerate(extra_input_train) :
+            scrambler_extra_inputs.append(Input(shape=tuple(list(extra_in.shape)[1:]), name='t_scrambler_extra_' + str(extra_in_ix)))
         
         scrambled_logits = []
         importance_scores = []
@@ -1095,10 +1163,18 @@ class Scrambler :
             deflated_sampled_pwms.append(deflated_sampled_pwm)
 
         #Make reference prediction on non-scrambled input sequence
-        y_pred_non_scrambled_deflated = predictor(scrambler_inputs) if reference == 'predictor' else scrambler_label
+        switch_to_1d_non_scrambled = Lambda(lambda x, signal_is_1d=signal_is_1d: x[:, 0, ...] if signal_is_1d else x, name='t_switch_to_1d_non_scrambled')
+        scrambler_inputs_to_pred = [switch_to_1d_non_scrambled(scrambler_input) for scrambler_input in scrambler_inputs]
+        y_pred_non_scrambled_deflated = predictor(scrambler_inputs_to_pred + scrambler_extra_inputs) if reference == 'predictor' else scrambler_label
 
         #Make prediction on scrambled sequence samples
-        y_pred_scrambled_deflated = predictor(deflated_sampled_pwms)
+        switch_to_1d_scrambled = Lambda(lambda x, signal_is_1d=signal_is_1d: x[:, 0, ...] if signal_is_1d else x, name='t_switch_to_1d_scrambled')
+        deflated_sampled_pwms_to_pred = [switch_to_1d_scrambled(deflated_sampled_pwm) for deflated_sampled_pwm in deflated_sampled_pwms]
+        scrambler_extra_inputs_repeated = []
+        for extra_in_ix, scrambler_extra_inp in enumerate(scrambler_extra_inputs) :
+            repeat_scrambler_extra_input = Lambda(lambda x: K.repeat_elements(x, self.n_samples, axis=0), name='repeat_scrambler_extra_input_' + str(extra_in_ix))
+            scrambler_extra_inputs_repeated.append(repeat_scrambler_extra_input(scrambler_extra_inp))
+        y_pred_scrambled_deflated = predictor(deflated_sampled_pwms_to_pred + scrambler_extra_inputs_repeated)
 
         #Define layer to inflate sample axis
         inflate_non_scrambled_prediction = Lambda(lambda x: K.tile(K.expand_dims(x, axis=1), (1, self.n_samples, 1)), name='t_inflate_non_scrambled_prediction')
@@ -1124,23 +1200,28 @@ class Scrambler :
         
         #NLL cost
         nll_loss_func = None
-        if nll_mode == 'reconstruction' and predictor_task == 'classification' :
-            if self.n_classes > 1 :
-                nll_loss_func = get_softmax_kl_divergence()
-            else :
-                nll_loss_func = get_sigmoid_kl_divergence()
-        elif nll_mode == 'reconstruction' and predictor_task == 'classification_sym' :
-            nll_loss_func = get_symmetric_sigmoid_kl_divergence()
-        elif nll_mode == 'maximization' and predictor_task == 'classification' :
-            nll_loss_func = get_sigmoid_max_nll()
-        elif nll_mode == 'minimization' and predictor_task == 'classification' :
-            nll_loss_func = get_sigmoid_min_nll()
-        elif nll_mode == 'reconstruction' and predictor_task == 'regression' :
-            nll_loss_func = get_mse()
-        elif nll_mode == 'maximization' and predictor_task == 'regression' :
-            nll_loss_func = get_linear_max_nll()
-        elif nll_mode == 'minimization' and predictor_task == 'regression' :
-            nll_loss_func = get_linear_min_nll()
+        
+        if custom_loss_func is not None :
+            nll_loss_func = custom_loss_func
+            scrambler_mode_coeff = 1.
+        else :
+            if nll_mode == 'reconstruction' and predictor_task == 'classification' :
+                if self.n_classes > 1 :
+                    nll_loss_func = get_softmax_kl_divergence()
+                else :
+                    nll_loss_func = get_sigmoid_kl_divergence()
+            elif nll_mode == 'reconstruction' and predictor_task == 'classification_sym' :
+                nll_loss_func = get_symmetric_sigmoid_kl_divergence()
+            elif nll_mode == 'maximization' and predictor_task == 'classification' :
+                nll_loss_func = get_sigmoid_max_nll()
+            elif nll_mode == 'minimization' and predictor_task == 'classification' :
+                nll_loss_func = get_sigmoid_min_nll()
+            elif nll_mode == 'reconstruction' and predictor_task == 'regression' :
+                nll_loss_func = get_mse()
+            elif nll_mode == 'maximization' and predictor_task == 'regression' :
+                nll_loss_func = get_linear_max_nll()
+            elif nll_mode == 'minimization' and predictor_task == 'regression' :
+                nll_loss_func = get_linear_min_nll()
 
         #Entropy cost
         entropy_loss_func = None
@@ -1172,7 +1253,7 @@ class Scrambler :
             entropy_loss = Lambda(lambda x: K.mean(x[0], axis=-1), name='entropy')(entropy_losses)
         
         loss_model = Model(
-            scrambler_classes + scrambler_inputs + (scrambler_drops if scrambler_drops[0] is not None else []) + ([scrambler_label] if scrambler_label is not None else []),
+            scrambler_classes + scrambler_inputs + (scrambler_drops if scrambler_drops[0] is not None else []) + ([scrambler_label] if scrambler_label is not None else []) + scrambler_extra_inputs,
             [nll_loss, entropy_loss]
         )
 
@@ -1215,21 +1296,22 @@ class Scrambler :
             x_track = [x[monitor_test_indices] for x in x_test]
             drop_track = [d[monitor_test_indices] for d in drop_test]
             label_track = [l[monitor_test_indices] for l in label_test]
+            extra_input_track = [e[monitor_test_indices] for e in extra_input_test]
             
-            monitor_loss_tensors = group_track + x_track + drop_track + label_track
+            monitor_loss_tensors = group_track + x_track + drop_track + label_track + extra_input_track
             monitor_tensors = group_track + x_track + drop_track + (label_track if self.label_input else [])
             
             monitor = ScramblerMonitor(self.scrambler_model, self.loss_model, monitor_loss_tensors, monitor_tensors, n_inputs=self.n_inputs, track_mode='batch', batch_freq_dict=monitor_batch_freq_dict, batch_size=self.batch_size)
             callbacks.append(monitor)
 
         train_history = loss_model.fit(
-            group_train + x_train + drop_train + label_train,
+            group_train + x_train + drop_train + label_train + extra_input_train,
             [dummy_train, dummy_train],
             shuffle=True,
             epochs=n_epochs,
             batch_size=self.batch_size,
             validation_data=(
-                group_test + x_test + drop_test + label_test,
+                group_test + x_test + drop_test + label_test + extra_input_test,
                 [dummy_test, dummy_test]
             ),
             callbacks=callbacks
@@ -1247,7 +1329,7 @@ class Scrambler :
         
         return train_history
     
-    def finetune(self, predictor, x, y, batch_size, n_iters, drop=None, group=None, norm_mode='instance', max_score_clip=4., adam_lr=0.01, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
+    def finetune(self, predictor, x, y, batch_size, n_iters, drop=None, extra_input=None, group=None, norm_mode='instance', max_score_clip=4., adam_lr=0.01, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', custom_loss_func=None, reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
         
         #Collect pre-trained importance scores
         print("Generating pre-trained scores...")
@@ -1267,9 +1349,9 @@ class Scrambler :
             max_score_clip=max_score_clip
         )
         
-        return self._optimize(predictor, finetuner, [pretrained_scores], x, y, batch_size, n_iters, 'finetune', drop=drop, group=group, adam_lr=adam_lr, adam_beta_1=adam_beta_1, adam_beta_2=adam_beta_2, nll_mode=nll_mode, predictor_task=predictor_task, reference=reference, entropy_mode=entropy_mode, entropy_bits=entropy_bits, entropy_weight=entropy_weight)
+        return self._optimize(predictor, finetuner, [pretrained_scores], x, y, batch_size, n_iters, 'finetune', drop=drop, extra_input=extra_input, group=group, adam_lr=adam_lr, adam_beta_1=adam_beta_1, adam_beta_2=adam_beta_2, nll_mode=nll_mode, predictor_task=predictor_task, custom_loss_func=custom_loss_func, reference=reference, entropy_mode=entropy_mode, entropy_bits=entropy_bits, entropy_weight=entropy_weight)
     
-    def optimize(self, predictor, x, y, batch_size, n_iters, drop=None, group=None, norm_mode='instance', adam_lr=0.01, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
+    def optimize(self, predictor, x, y, batch_size, n_iters, drop=None, extra_input=None, group=None, norm_mode='instance', adam_lr=0.01, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', custom_loss_func=None, reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
         
         #Load optimizer
         optimizer = load_optimization_model(
@@ -1284,18 +1366,31 @@ class Scrambler :
             norm_mode=norm_mode
         )
         
-        return self._optimize(predictor, optimizer, [], x, y, batch_size, n_iters, 'optimize', drop=drop, group=group, adam_lr=adam_lr, adam_beta_1=adam_beta_1, adam_beta_2=adam_beta_2, nll_mode=nll_mode, predictor_task=predictor_task, reference=reference, entropy_mode=entropy_mode, entropy_bits=entropy_bits, entropy_weight=entropy_weight)
+        return self._optimize(predictor, optimizer, [], x, y, batch_size, n_iters, 'optimize', drop=drop, extra_input=extra_input, group=group, adam_lr=adam_lr, adam_beta_1=adam_beta_1, adam_beta_2=adam_beta_2, nll_mode=nll_mode, predictor_task=predictor_task, custom_loss_func=custom_loss_func, reference=reference, entropy_mode=entropy_mode, entropy_bits=entropy_bits, entropy_weight=entropy_weight)
     
-    def _optimize(self, predictor, finetuner, pretrained_scores, x, y, batch_size, n_iters, opt_mode, drop=None, group=None, adam_lr=0.01, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
+    def _optimize(self, predictor, finetuner, pretrained_scores, x, y, batch_size, n_iters, opt_mode, drop=None, extra_input=None, group=None, adam_lr=0.01, adam_beta_1=0.5, adam_beta_2=0.9, nll_mode='reconstruction', predictor_task='classification', custom_loss_func=None, reference='predictor', entropy_mode='target', entropy_bits=0., entropy_weight=1.) :
         
         if not isinstance(x, list) :
             x = [x]
+        
+        signal_is_1d = False
+        if len(x[0].shape) == 3 :
+            signal_is_1d = True
+            
+            for i in range(len(x)) :
+                x[i] = x[i][:, None, ...]
         
         if group is None :
             group = [np.zeros((x[0].shape[0], 1)) for input_ix in range(self.n_inputs)]
         
         if not isinstance(group, list) :
             group = [group]
+        
+        if extra_input is None :
+            extra_input = []
+        
+        if not isinstance(extra_input, list) :
+            extra_input = [extra_input]
         
         if drop is None :
             drop = [
@@ -1411,6 +1506,7 @@ class Scrambler :
         scrambler_inputs = []
         scrambler_drops = []
         scrambler_pretrained_scores = []
+        scrambler_extra_inputs = []
         for input_ix in range(self.n_inputs) :
             scrambler_classes.append(Input(batch_shape=(batch_size, 1), name='ft_scrambler_group_' + str(input_ix)))
             scrambler_inputs.append(Input(batch_shape=(batch_size, self.input_size_x, self.input_size_y, self.n_out_channels), name='ft_scrambler_input_' + str(input_ix)))
@@ -1421,6 +1517,9 @@ class Scrambler :
         scrambler_label = None
         if reference == 'label' :
             scrambler_label = Input(batch_shape=(batch_size, self.n_classes), name='ft_scrambler_label')
+        
+        for extra_in_ix, extra_in in enumerate(extra_input) :
+            scrambler_extra_inputs.append(Input(batch_shape=tuple([batch_size] + list(extra_in.shape)[1:]), name='ft_scrambler_extra_' + str(extra_in_ix)))
         
         scrambled_logits = []
         importance_scores = []
@@ -1486,10 +1585,18 @@ class Scrambler :
             deflated_sampled_pwms.append(deflated_sampled_pwm)
 
         #Make reference prediction on non-scrambled input sequence
-        y_pred_non_scrambled_deflated = predictor(scrambler_inputs) if reference == 'predictor' else scrambler_label
+        switch_to_1d_non_scrambled = Lambda(lambda x, signal_is_1d=signal_is_1d: x[:, 0, ...] if signal_is_1d else x, name='t_switch_to_1d_non_scrambled')
+        scrambler_inputs_to_pred = [switch_to_1d_non_scrambled(scrambler_input) for scrambler_input in scrambler_inputs]
+        y_pred_non_scrambled_deflated = predictor(scrambler_inputs_to_pred + scrambler_extra_inputs) if reference == 'predictor' else scrambler_label
 
         #Make prediction on scrambled sequence samples
-        y_pred_scrambled_deflated = predictor(deflated_sampled_pwms)
+        switch_to_1d_scrambled = Lambda(lambda x, signal_is_1d=signal_is_1d: x[:, 0, ...] if signal_is_1d else x, name='t_switch_to_1d_scrambled')
+        deflated_sampled_pwms_to_pred = [switch_to_1d_scrambled(deflated_sampled_pwm) for deflated_sampled_pwm in deflated_sampled_pwms]
+        scrambler_extra_inputs_repeated = []
+        for extra_in_ix, scrambler_extra_inp in enumerate(scrambler_extra_inputs) :
+            repeat_scrambler_extra_input = Lambda(lambda x: K.repeat_elements(x, self.n_samples, axis=0), name='repeat_scrambler_extra_input_' + str(extra_in_ix))
+            scrambler_extra_inputs_repeated.append(repeat_scrambler_extra_input(scrambler_extra_inp))
+        y_pred_scrambled_deflated = predictor(deflated_sampled_pwms_to_pred + scrambler_extra_inputs_repeated)
 
         #Define layer to inflate sample axis
         inflate_non_scrambled_prediction = Lambda(lambda x: K.tile(K.expand_dims(x, axis=1), (1, self.n_samples, 1)), name='ft_inflate_non_scrambled_prediction')
@@ -1515,23 +1622,28 @@ class Scrambler :
         
         #NLL cost
         nll_loss_func = None
-        if nll_mode == 'reconstruction' and predictor_task == 'classification' :
-            if self.n_classes > 1 :
-                nll_loss_func = get_softmax_kl_divergence()
-            else :
-                nll_loss_func = get_sigmoid_kl_divergence()
-        elif nll_mode == 'reconstruction' and predictor_task == 'classification_sym' :
-            nll_loss_func = get_symmetric_sigmoid_kl_divergence()
-        elif nll_mode == 'maximization' and predictor_task == 'classification' :
-            nll_loss_func = get_sigmoid_max_nll()
-        elif nll_mode == 'minimization' and predictor_task == 'classification' :
-            nll_loss_func = get_sigmoid_min_nll()
-        elif nll_mode == 'reconstruction' and predictor_task == 'regression' :
-            nll_loss_func = get_mse()
-        elif nll_mode == 'maximization' and predictor_task == 'regression' :
-            nll_loss_func = get_linear_max_nll()
-        elif nll_mode == 'minimization' and predictor_task == 'regression' :
-            nll_loss_func = get_linear_min_nll()
+        
+        if custom_loss_func is not None :
+            nll_loss_func = custom_loss_func
+            scrambler_mode_coeff = 1.
+        else :
+            if nll_mode == 'reconstruction' and predictor_task == 'classification' :
+                if self.n_classes > 1 :
+                    nll_loss_func = get_softmax_kl_divergence()
+                else :
+                    nll_loss_func = get_sigmoid_kl_divergence()
+            elif nll_mode == 'reconstruction' and predictor_task == 'classification_sym' :
+                nll_loss_func = get_symmetric_sigmoid_kl_divergence()
+            elif nll_mode == 'maximization' and predictor_task == 'classification' :
+                nll_loss_func = get_sigmoid_max_nll()
+            elif nll_mode == 'minimization' and predictor_task == 'classification' :
+                nll_loss_func = get_sigmoid_min_nll()
+            elif nll_mode == 'reconstruction' and predictor_task == 'regression' :
+                nll_loss_func = get_mse()
+            elif nll_mode == 'maximization' and predictor_task == 'regression' :
+                nll_loss_func = get_linear_max_nll()
+            elif nll_mode == 'minimization' and predictor_task == 'regression' :
+                nll_loss_func = get_linear_min_nll()
 
         #Entropy cost
         entropy_loss_func = None
@@ -1564,7 +1676,7 @@ class Scrambler :
             entropy_loss = Lambda(lambda x: K.reshape(K.sum(K.mean(x, axis=-1), axis=0), (1,)), name='ft_entropy')(entropy_losses[0])
         
         finetuning_loss_model = Model(
-            scrambler_classes + scrambler_inputs + scrambler_drops + scrambler_pretrained_scores + ([scrambler_label] if scrambler_label is not None else []),
+            scrambler_classes + scrambler_inputs + scrambler_drops + scrambler_pretrained_scores + ([scrambler_label] if scrambler_label is not None else []) + scrambler_extra_inputs,
             [nll_loss, entropy_loss]
         )
 
@@ -1620,7 +1732,7 @@ class Scrambler :
         
         label = [y] if reference == 'label' else []
         
-        input_tensors = group + x + drop + pretrained_scores + label
+        input_tensors = group + x + drop + pretrained_scores + label + extra_input
         
         #Pad data
         n_pad = batch_size - x[0].shape[0] % batch_size
@@ -1692,9 +1804,14 @@ class Scrambler :
             _reset_optimizer(opt)
         
         for i in range(self.n_inputs) :
-            pwms[i] = np.concatenate(pwms[i], axis=0)
-            samples[i] = np.concatenate(samples[i], axis=0)
-            scores[i] = np.concatenate(scores[i], axis=0)
+            if signal_is_1d :
+                pwms[i] = np.concatenate(pwms[i], axis=0)[:, 0, ...]
+                samples[i] = np.concatenate(samples[i], axis=0)[:, :, 0, ...]
+                scores[i] = np.concatenate(scores[i], axis=0)[:, 0, ...]
+            else :
+                pwms[i] = np.concatenate(pwms[i], axis=0)
+                samples[i] = np.concatenate(samples[i], axis=0)
+                scores[i] = np.concatenate(scores[i], axis=0)
         
         if len(pwms) <= 1 :
             return pwms[0], samples[0], scores[0], train_histories
