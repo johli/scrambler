@@ -45,7 +45,8 @@ Interpretating predictors for images.
 #### RNA
 Interpretating predictors for RNA-regulatory biology.
 
-[Notebook 2: Interpreting APA Sequences](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/dna/scrambler_apa_example.ipynb)<br/>
+[Notebook 2a: Interpreting APA Sequences](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/dna/scrambler_apa_example.ipynb)<br/>
+[Notebook 2b: Interpreting APA Sequences (Custom Loss)](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/dna/scrambler_apa_example_custom_loss.ipynb)<br/>
 [Notebook 3a: Interpreting 5' UTR Sequences](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/dna/scrambler_optimus5_example.ipynb)<br/>
 [Notebook 3b: Optimizing individual 5' UTR Interpretations](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/dna/scrambler_optimus5_from_scratch_example.ipynb)<br/>
 [Notebook 3c: Fine-tuning pre-trained 5' UTR Interpretations](https://nbviewer.jupyter.org/github/johli/scrambler/blob/master/examples/dna/scrambler_optimus5_finetuning_example.ipynb)<br/>
