@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/357586795.svg)](https://zenodo.org/badge/latestdoi/357586795)
+
 ![Scrambler Logo](https://github.com/johli/scrambler/blob/master/resources/scrambler_logo.png?raw=true)
 
 # Scrambler Neural Networks
